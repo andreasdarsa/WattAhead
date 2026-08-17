@@ -1,15 +1,11 @@
-from pathlib import Path
-
+from xgboost import XGBRegressor
 import pandas as pd
-from sklearn.linear_model import Ridge
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
     mean_absolute_percentage_error,
 )
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-
+from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
@@ -21,25 +17,21 @@ DATA_PATH = (
 )
 
 FEATURES = [
-    # Cyclical calendar
+    "hour",
+    "day_of_week",
+    "month",
     "hour_sin",
     "hour_cos",
     "dow_sin",
     "dow_cos",
     "month_sin",
     "month_cos",
-
-    # Calendar
     "is_weekend",
     "is_holiday",
     "is_non_working_day",
-
-    # Historical demand
     "lag_24",
     "lag_48",
     "lag_168",
-
-    # Weather
     "temperature_mean",
     "temperature_min",
     "temperature_max",
@@ -48,7 +40,6 @@ FEATURES = [
 ]
 
 TARGET = "load_mw"
-
 
 def evaluate(y_true, y_pred):
     return {
@@ -125,48 +116,79 @@ assert X_val.isna().sum().sum() == 0
 assert X_test.isna().sum().sum() == 0
 
 
-# Evaluation helper is also used for our persistence baselines
-baselines = {
-    "Previous Day": "lag_24",
-    "Two Days Ago": "lag_48",
-    "Previous Week": "lag_168",
-}
+PARAM_GRID = [
+    {
+        "max_depth": 4,
+        "min_child_weight": 1,
+        "learning_rate": 0.03,
+    },
+    {
+        "max_depth": 4,
+        "min_child_weight": 3,
+        "learning_rate": 0.03,
+    },
+    {
+        "max_depth": 6,
+        "min_child_weight": 1,
+        "learning_rate": 0.03,
+    },
+    {
+        "max_depth": 6,
+        "min_child_weight": 3,
+        "learning_rate": 0.03,
+    },
+    {
+        "max_depth": 8,
+        "min_child_weight": 3,
+        "learning_rate": 0.03,
+    },
+    {
+        "max_depth": 6,
+        "min_child_weight": 3,
+        "learning_rate": 0.05,
+    },
+]
 
-print("\nValidation Baselines")
+results = []
 
-for name, column in baselines.items():
-    metrics = evaluate(
-        y_val,
-        val_df[column],
+for params in PARAM_GRID:
+    model = XGBRegressor(
+        n_estimators=1000,
+        max_depth=params["max_depth"],
+        min_child_weight=params["min_child_weight"],
+        learning_rate=params["learning_rate"],
+        subsample=0.8,
+        colsample_bytree=0.8,
+        objective="reg:squarederror",
+        random_state=42,
+        n_jobs=-1,
     )
 
-    print(f"\n{name}")
-    for metric, value in metrics.items():
-        print(f"{metric}: {value:.3f}")
+    model.fit(
+        X_train,
+        y_train,
+    )
 
+    val_pred = model.predict(X_val)
 
-# Ridge Regression
-model = Pipeline([
-    ("scaler", StandardScaler()),
-    ("ridge", Ridge(alpha=1.0)),
-])
+    metrics = evaluate(
+        y_val,
+        val_pred,
+    )
 
-model.fit(
-    X_train,
-    y_train,
-)
+    results.append({
+        **params,
+        **metrics,
+    })
 
+results_df = pd.DataFrame(results)
 
-# Validation evaluation
-val_pred = model.predict(X_val)
+results_df = results_df.sort_values("MAE")
 
-val_metrics = evaluate(
-    y_val,
-    val_pred,
-)
+print("\nXGBoost Hyperparameter Tuning — 2019 Validation")
+print(results_df.to_string(index=False))
 
-print("\nRidge Regression — Validation")
+best = results_df.iloc[0]
 
-for metric, value in val_metrics.items():
-    print(f"{metric}: {value:.3f}")
-    
+print("\nBest configuration:")
+print(best)

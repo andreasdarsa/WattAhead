@@ -1,14 +1,12 @@
 from pathlib import Path
 
 import pandas as pd
-from sklearn.linear_model import Ridge
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
     mean_absolute_percentage_error,
 )
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -21,6 +19,11 @@ DATA_PATH = (
 )
 
 FEATURES = [
+    # Raw calendar
+    "hour",
+    "day_of_week",
+    "month",
+
     # Cyclical calendar
     "hour_sin",
     "hour_cos",
@@ -29,7 +32,7 @@ FEATURES = [
     "month_sin",
     "month_cos",
 
-    # Calendar
+    # Calendar flags
     "is_weekend",
     "is_holiday",
     "is_non_working_day",
@@ -145,19 +148,21 @@ for name, column in baselines.items():
         print(f"{metric}: {value:.3f}")
 
 
-# Ridge Regression
-model = Pipeline([
-    ("scaler", StandardScaler()),
-    ("ridge", Ridge(alpha=1.0)),
-])
+# Random Forest Regressor
+model = RandomForestRegressor(
+    n_estimators=300,
+    max_depth=20,
+    min_samples_leaf=2,
+    max_features=0.8,
+    n_jobs=-1,
+    random_state=42,
+)
 
 model.fit(
     X_train,
     y_train,
 )
 
-
-# Validation evaluation
 val_pred = model.predict(X_val)
 
 val_metrics = evaluate(
@@ -165,8 +170,21 @@ val_metrics = evaluate(
     val_pred,
 )
 
-print("\nRidge Regression — Validation")
+print("\nRandom Forest — Validation")
 
 for metric, value in val_metrics.items():
     print(f"{metric}: {value:.3f}")
-    
+
+feature_importance = (
+    pd.DataFrame({
+        "feature": FEATURES,
+        "importance": model.feature_importances_,
+    })
+    .sort_values(
+        "importance",
+        ascending=False,
+    )
+)
+
+print("\nFeature Importance")
+print(feature_importance.to_string(index=False))

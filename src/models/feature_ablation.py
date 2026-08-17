@@ -1,14 +1,12 @@
 from pathlib import Path
 
 import pandas as pd
-from sklearn.linear_model import Ridge
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
     mean_absolute_percentage_error,
 )
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from xgboost import XGBRegressor
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -20,32 +18,45 @@ DATA_PATH = (
     / "wattahead_features.csv"
 )
 
-FEATURES = [
-    # Cyclical calendar
+LAG_FEATURES = [
+    "lag_24",
+    "lag_48",
+    "lag_168",
+]
+
+CALENDAR_FEATURES = [
+    "hour",
+    "day_of_week",
+    "month",
     "hour_sin",
     "hour_cos",
     "dow_sin",
     "dow_cos",
     "month_sin",
     "month_cos",
-
-    # Calendar
     "is_weekend",
     "is_holiday",
     "is_non_working_day",
+]
 
-    # Historical demand
-    "lag_24",
-    "lag_48",
-    "lag_168",
-
-    # Weather
+WEATHER_FEATURES = [
     "temperature_mean",
     "temperature_min",
     "temperature_max",
     "humidity_mean",
     "wind_speed_mean",
 ]
+
+FEATURE_SETS = {
+    "Lags only": LAG_FEATURES,
+    "Lags + Calendar": LAG_FEATURES + CALENDAR_FEATURES,
+    "Lags + Weather": LAG_FEATURES + WEATHER_FEATURES,
+    "All Features": (
+        LAG_FEATURES
+        + CALENDAR_FEATURES
+        + WEATHER_FEATURES
+    ),
+}
 
 TARGET = "load_mw"
 
@@ -104,25 +115,8 @@ for name, split in [
     )
 
 
-# Prepare features and targets
-X_train = train_df[FEATURES]
 y_train = train_df[TARGET]
-
-X_val = val_df[FEATURES]
 y_val = val_df[TARGET]
-
-X_test = test_df[FEATURES]
-y_test = test_df[TARGET]
-
-
-print(X_train.shape, y_train.shape)
-print(X_val.shape, y_val.shape)
-print(X_test.shape, y_test.shape)
-
-
-assert X_train.isna().sum().sum() == 0
-assert X_val.isna().sum().sum() == 0
-assert X_test.isna().sum().sum() == 0
 
 
 # Evaluation helper is also used for our persistence baselines
@@ -145,28 +139,50 @@ for name, column in baselines.items():
         print(f"{metric}: {value:.3f}")
 
 
-# Ridge Regression
-model = Pipeline([
-    ("scaler", StandardScaler()),
-    ("ridge", Ridge(alpha=1.0)),
-])
+results = []
 
-model.fit(
-    X_train,
-    y_train,
+for name, features in FEATURE_SETS.items():
+
+    X_train = train_df[features]
+    X_val = val_df[features]
+
+    model = XGBRegressor(
+        n_estimators=1000,
+        learning_rate=0.03,
+        max_depth=6,
+        min_child_weight=3,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        objective="reg:squarederror",
+        random_state=42,
+        n_jobs=-1,
+    )
+
+    model.fit(
+        X_train,
+        y_train,
+    )
+
+    val_pred = model.predict(X_val)
+
+    metrics = evaluate(
+        y_val,
+        val_pred,
+    )
+
+    results.append({
+        "Feature Set": name,
+        **metrics,
+    })
+
+
+results_df = pd.DataFrame(results)
+
+print("\nFeature Ablation — 2019 Validation")
+
+print(
+    results_df
+    .sort_values("MAE")
+    .to_string(index=False)
 )
 
-
-# Validation evaluation
-val_pred = model.predict(X_val)
-
-val_metrics = evaluate(
-    y_val,
-    val_pred,
-)
-
-print("\nRidge Regression — Validation")
-
-for metric, value in val_metrics.items():
-    print(f"{metric}: {value:.3f}")
-    
